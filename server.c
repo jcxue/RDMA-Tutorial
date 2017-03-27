@@ -49,7 +49,7 @@ void *server_thread (void *arg)
         ret = post_recv (msg_size, lkey, (uint64_t)buf_ptr, qp, buf_ptr);
         check (ret == 0, "thread[%ld]: failed to post recv", thread_id);
         buf_offset = (buf_offset + msg_size) % buf_size;
-        buf_ptr += buf_offset;
+        buf_ptr    = ib_res.ib_buf + buf_offset;
     }
 
     /* signal the client to start */

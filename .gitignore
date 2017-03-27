@@ -27,7 +27,11 @@
 *.i*86
 *.x86_64
 *.hex
+rdma-tutorial
 
 # Debug files
 *.dSYM/
 *.su
+
+# Output files
+*.log

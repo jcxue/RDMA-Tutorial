@@ -206,7 +206,7 @@ void close_ib_connection ()
     if (ib_res.qp != NULL) {
 	ibv_destroy_qp (ib_res.qp);
     }
- 
+
     if (ib_res.cq != NULL) {
 	ibv_destroy_cq (ib_res.cq);
     }
