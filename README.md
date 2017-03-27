@@ -2,7 +2,7 @@
 This project presents an example based tutorial on RDMA based programming. A more detailed 
 discussion can be found in the Wiki page.
 
-## Hardware and software discussion
+## Hardware and software requirement
  * Mellanox HCAs
  * GNU make
  * gcc-4.4
@@ -11,8 +11,6 @@ discussion can be found in the Wiki page.
 ## How the build project
 Simply use ```make``` to build the release version or ```make debug``` to build the 
 debug version.
- 
-## Code structure
 
 ## Contact
 
