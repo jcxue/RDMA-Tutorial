@@ -16,22 +16,27 @@ int main (int argc, char *argv[])
 {
     int	ret = 0;
 
-    if (argc == 5) {
+    if (argc == 6) {
 	config_info.is_server	     = false;
 	config_info.server_name	     = argv[1];
 	config_info.msg_size	     = atoi (argv[2]); 
 	config_info.num_concurr_msgs = atoi (argv[3]);
-	config_info.sock_port	     = argv[4];
-    } else if (argc == 4) {
+	config_info.batch_size       = atoi (argv[4]);
+	config_info.sock_port	     = argv[5];
+    } else if (argc == 5) {
 	config_info.is_server	     = true;
 	config_info.msg_size	     = atoi (argv[1]); 
 	config_info.num_concurr_msgs = atoi (argv[2]);
-	config_info.sock_port	     = argv[3];
+	config_info.batch_size       = atoi (argv[3]);
+	config_info.sock_port	     = argv[4];
     } else {
-	printf ("Server: %s msg_size num_concurr_msgs sock_port\n", argv[0]);
-	printf ("Client: %s server_name msg_size num_concurr_msgs sock_port\n", argv[0]);
+	printf ("Server: %s msg_size num_concurr_msgs batch_size sock_port\n", argv[0]);
+	printf ("Client: %s server_name msg_size num_concurr_msgs batch_size sock_port\n", argv[0]);
 	return 0;
     }    
+
+    check ((config_info.num_concurr_msgs % config_info.batch_size) == 0, 
+	   "num_concurr_msgs needs to be multiples of batch size");
 
     ret = init_env ();
     check (ret == 0, "Failed to init env");

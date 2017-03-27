@@ -163,11 +163,11 @@ int setup_ib ()
     check(ret == 0, "Failed to query IB port information.");
     
     /* register mr */
-    /* set the buf_size (msg_size + 1) * num_concurr_msgs */
-    /* the recv buffer is of size msg_size * num_concurr_msgs */
-    /* followed by a sending buffer of size msg_size since we */
+    /* set the buf_size twice as large as msg_size * num_concurr_msgs */
+    /* the recv buffer occupies the first half while the sending buffer */
+    /* occupies the second half */
     /* assume all msgs are of the same content */
-    ib_res.ib_buf_size = config_info.msg_size * (config_info.num_concurr_msgs + 1);
+    ib_res.ib_buf_size = config_info.msg_size * config_info.num_concurr_msgs * 2;
     ib_res.ib_buf      = (char *) memalign (4096, ib_res.ib_buf_size);
     check (ib_res.ib_buf != NULL, "Failed to allocate ib_buf");
 
@@ -183,7 +183,7 @@ int setup_ib ()
     memset (ib_res.ib_buf, '\0', buf_len);
     
     /* set sending buffer to all 'A' */
-    memset (ib_res.ib_buf + buf_len, 'A', config_info.msg_size);
+    memset (ib_res.ib_buf + buf_len, 'A', buf_len);
 
     /* query IB device attr */
     ret = ibv_query_device(ib_res.ctx, &ib_res.dev_attr);
@@ -203,13 +203,34 @@ int setup_ib ()
             .max_recv_wr = ib_res.dev_attr.max_qp_wr,
             .max_send_sge = 1,
             .max_recv_sge = 1,
-	    .max_inline_data = config_info.msg_size,
         },
         .qp_type = IBV_QPT_RC,
     };
 
     ib_res.qp = ibv_create_qp (ib_res.pd, &qp_init_attr);
     check (ib_res.qp != NULL, "Failed to create qp");
+
+    /* initialize send_wrs and send_sges for  batching */
+    int num_concurr_msgs = config_info.num_concurr_msgs;
+    int batch_size       = config_info.batch_size;
+    int num_batches      = num_concurr_msgs / batch_size;
+    int i, j, ind        = 0;
+    char *send_buf_ptr   = ib_res.ib_buf + buf_len;
+
+    ib_res.send_wrs = (struct ibv_send_wr *) calloc (num_concurr_msgs, 
+						     sizeof(struct ibv_send_wr));
+    check (ib_res.send_wrs != NULL, "Failed to allocate send_wrs");
+
+    ib_res.send_sges = (struct ibv_sge *) calloc (num_concurr_msgs, 
+						  sizeof(struct ibv_sge));
+    check (ib_res.send_sges != NULL, "Failed to allocate send_sges");
+
+    for (i = 0; i < num_concurr_msgs; i++) {
+	ib_res.send_sges[i].addr    = (uintptr_t) send_buf_ptr;
+	ib_res.send_sges[i].length  = config_info.msg_size;
+	ib_res.send_sges[i].lkey    = ib_res.mr->lkey;
+	send_buf_ptr	           += config_info.msg_size; 
+    }
 
     /* connect QP */
     if (config_info.is_server) {
@@ -218,6 +239,28 @@ int setup_ib ()
 	ret = connect_qp_client ();
     }
     check (ret == 0, "Failed to connect qp");
+
+    uint64_t raddr = ib_res.raddr;
+    for (i = 0; i < num_batches; i++) {
+	for (j = 0; j < (batch_size - 1); j++) {
+	    ib_res.send_wrs[ind].next		      = &ib_res.send_wrs[ind + 1];
+	    ib_res.send_wrs[ind].sg_list	      = &ib_res.send_sges[ind];
+	    ib_res.send_wrs[ind].num_sge	      = 1;
+	    ib_res.send_wrs[ind].opcode		      = IBV_WR_RDMA_WRITE;
+	    ib_res.send_wrs[ind].wr.rdma.remote_addr  = raddr;
+	    ib_res.send_wrs[ind].wr.rdma.rkey	      = ib_res.rkey;
+	    ind					     += 1;
+	    raddr				     += config_info.msg_size;
+	}
+	ib_res.send_wrs[ind].next		  = NULL;
+	ib_res.send_wrs[ind].sg_list		  = &ib_res.send_sges[ind];
+        ib_res.send_wrs[ind].num_sge		  = 1;
+	ib_res.send_wrs[ind].opcode		  = IBV_WR_RDMA_WRITE;
+	ib_res.send_wrs[ind].wr.rdma.remote_addr  = ib_res.raddr;
+	ib_res.send_wrs[ind].wr.rdma.rkey	  = ib_res.rkey;
+	ind					 += 1;
+	raddr					 += config_info.msg_size;
+    }
 
     ibv_free_device_list (dev_list);
     return 0;
@@ -249,6 +292,14 @@ void close_ib_connection ()
 
     if (ib_res.ctx != NULL) {
         ibv_close_device (ib_res.ctx);
+    }
+
+    if (ib_res.send_wrs != NULL) {
+	free (ib_res.send_wrs);
+    }
+
+    if (ib_res.send_sges != NULL) {
+	free (ib_res.send_sges);
     }
 
     if (ib_res.ib_buf != NULL) {
