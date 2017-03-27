@@ -1,6 +1,6 @@
 # RDMA-Tutorial
 This project presents an example based tutorial on RDMA based programming. A more detailed 
-discussion can be found in the Wiki page.
+discussion can be found in the [Wiki](https://github.com/jcxue/RDMA-Tutorial/wiki) page.
 
 ## Hardware and software requirement
  * Mellanox HCAs
