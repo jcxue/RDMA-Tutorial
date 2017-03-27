@@ -8,9 +8,15 @@ discussion can be found in the Wiki page.
  * gcc-4.4
  * Mellanox OFED 3.3
 
-## How the build project
+## How to use
+
+### build project
 Simply use ```make``` to build the release version or ```make debug``` to build the 
 debug version.
+
+### navigate between examples
+The examples coming along with this project are organized as git commits. Simply do ```git log --oneline``` 
+to find the commit version number corresponding to the examples.
 
 ## Contact
 
