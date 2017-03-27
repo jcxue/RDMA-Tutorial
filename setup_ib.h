@@ -14,6 +14,9 @@ struct IBRes {
 
     char   *ib_buf;
     size_t  ib_buf_size;
+
+    uint32_t rkey;
+    uint64_t raddr;
 };
 
 extern struct IBRes ib_res;
