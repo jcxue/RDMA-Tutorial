@@ -8,18 +8,14 @@ struct IBRes {
     struct ibv_pd		*pd;
     struct ibv_mr		*mr;
     struct ibv_cq		*cq;
-    struct ibv_qp		*qp;
+    struct ibv_qp		**qp;
+    struct ibv_srq              *srq;
     struct ibv_port_attr	 port_attr;
     struct ibv_device_attr	 dev_attr;
 
-    struct ibv_send_wr         *send_wrs;
-    struct ibv_sge             *send_sges;
-
+    int     num_qps;
     char   *ib_buf;
     size_t  ib_buf_size;
-
-    uint32_t rkey;
-    uint64_t raddr;
 };
 
 extern struct IBRes ib_res;

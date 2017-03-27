@@ -11,37 +11,35 @@
 
 void *client_thread_func (void *arg)
 {
-    int         ret		 = 0, n = 0;
+    int         ret		 = 0, n = 0, i = 0, j = 0;
     long	thread_id	 = (long) arg;
     int         msg_size	 = config_info.msg_size;
-    int         batch_size	 = config_info.batch_size;
     int         num_concurr_msgs = config_info.num_concurr_msgs;
+    int         num_peers        = ib_res.num_qps;
 
     pthread_t   self;
     cpu_set_t   cpuset;
 
     int                  num_wc		= 20;
-    struct ibv_qp	*qp		= ib_res.qp;
+    struct ibv_qp	**qp		= ib_res.qp;
     struct ibv_cq       *cq		= ib_res.cq;
+    struct ibv_srq      *srq            = ib_res.srq;
     struct ibv_wc       *wc		= NULL;
-    
-    char		*buf_ptr	= ib_res.ib_buf;
-    int			 buf_offset	= 0;
-    size_t               buf_size	= msg_size * num_concurr_msgs;
-    size_t               batch_msg_size = msg_size * batch_size;
-    volatile char       *msg_start	= buf_ptr;
-    volatile char       *msg_end	= msg_start + batch_msg_size - 1;
-    struct ibv_send_wr  *bad_send_wr	= NULL;
-    struct ibv_send_wr  *send_wr	= ib_res.send_wrs;
-    int                  send_wr_ind	= 0;
-    
-    struct timeval      start, end;
-    long                ops_count  = 0;
-    double              duration   = 0.0;
-    double              throughput = 0.0;
+    uint32_t             lkey           = ib_res.mr->lkey;
 
-    wc = (struct ibv_wc *) calloc (num_wc, sizeof(struct ibv_wc));
-    check (wc != NULL, "thread[%ld]: failed to allocate wc.", thread_id);
+    char		*buf_ptr	= ib_res.ib_buf;
+    char		*buf_base	= ib_res.ib_buf;
+    int			 buf_offset	= 0;
+    size_t               buf_size	= ib_res.ib_buf_size;
+    
+    uint32_t		imm_data	= 0;
+    int			num_acked_peers = 0;
+    bool		start_sending	= false;
+    bool		stop		= false;
+    struct timeval      start, end;
+    long                ops_count	= 0;
+    double              duration	= 0.0;
+    double              throughput	= 0.0;
 
     /* set thread affinity */
     CPU_ZERO (&cpuset);
@@ -50,38 +48,106 @@ void *client_thread_func (void *arg)
     ret  = pthread_setaffinity_np (self, sizeof(cpu_set_t), &cpuset);
     check (ret == 0, "thread[%ld]: failed to set thread affinity", thread_id);
 
+    /* pre-post recvs */    
+    wc = (struct ibv_wc *) calloc (num_wc, sizeof(struct ibv_wc));
+    check (wc != NULL, "thread[%ld]: failed to allocate wc.", thread_id);
 
-    while (ops_count < TOT_NUM_OPS) {
-	/* loop till receive a msg from server */
-	while ((*msg_start != 'A') && (*msg_end != 'A')) {
+    for (i = 0; i < num_peers; i++) {
+	for (j = 0; j < num_concurr_msgs; j++) {
+	    ret = post_srq_recv (msg_size, lkey, (uint64_t)buf_ptr, srq, buf_ptr);
+	    buf_offset = (buf_offset + msg_size) % buf_size;
+	    buf_ptr = buf_base + buf_offset;
 	}
-
-	/* reset recv buffer */
-	memset ((char *)msg_start, '\0', batch_msg_size);
-
-	/* send a msg back to the server */
-	ops_count += batch_size;
-	if ((ops_count % SIG_INTERVAL) == 0) {
-	    send_wr[send_wr_ind].send_flags = IBV_SEND_SIGNALED;
-	    ret = ibv_post_send (qp, &send_wr[send_wr_ind], &bad_send_wr);
-	} else {
-	    ret = ibv_post_send (qp, &send_wr[send_wr_ind], &bad_send_wr);
-	}
-
-	send_wr_ind = (send_wr_ind + batch_size) % num_concurr_msgs;	
-	buf_offset = (buf_offset + batch_msg_size) % buf_size;
-	msg_start  = buf_ptr + buf_offset;
-	msg_end    = msg_start + batch_msg_size - 1;
-
-	if (ops_count == NUM_WARMING_UP_OPS) {
-	    gettimeofday (&start, NULL);
-	}
-
-	n = ibv_poll_cq (cq, num_wc, wc);
-	debug ("ops_count = %ld", ops_count);
     }
 
-    gettimeofday (&end, NULL);
+    /* wait for start signal */
+    while (start_sending != true) {
+        do {
+            n = ibv_poll_cq (cq, num_wc, wc);
+        } while (n < 1);
+        check (n > 0, "thread[%ld]: failed to poll cq", thread_id);
+
+        for (i = 0; i < n; i++) {
+            if (wc[i].status != IBV_WC_SUCCESS) {
+                check (0, "thread[%ld]: wc failed status: %s.",
+                       thread_id, ibv_wc_status_str(wc[i].status));
+            }
+            if (wc[i].opcode == IBV_WC_RECV) {
+                /* post a receive */
+                post_srq_recv (msg_size, lkey, wc[i].wr_id, srq, (char *)wc[i].wr_id);
+                
+                if (ntohl(wc[i].imm_data) == MSG_CTL_START) {
+		    num_acked_peers += 1;
+		    if (num_acked_peers == num_peers) {
+			start_sending = true;
+			break;
+		    }
+                }
+            }
+        }
+    }
+    log ("thread[%ld]: ready to send", thread_id);
+
+    /* pre-post sends */
+    buf_offset = 0;
+    debug ("buf_ptr = %"PRIx64"", (uint64_t)buf_ptr);
+    for (i = 0; i < num_peers; i++) {
+	for (j = 0; j < num_concurr_msgs; j++) {
+	    ret = post_send (msg_size, lkey, (uint64_t)buf_ptr, (uint32_t)i, qp[i], buf_ptr);
+	    check (ret == 0, "thread[%ld]: failed to post send", thread_id);
+	    buf_offset = (buf_offset + msg_size) % buf_size;
+	    buf_ptr = buf_base + buf_offset;
+	}
+    }
+
+    num_acked_peers = 0;
+    while (stop != true) {
+        /* poll cq */
+        n = ibv_poll_cq (cq, num_wc, wc);
+        if (n < 0) {
+            check (0, "thread[%ld]: Failed to poll cq", thread_id);
+        }
+
+        for (i = 0; i < n; i++) {
+            if (wc[i].status != IBV_WC_SUCCESS) {
+                if (wc[i].opcode == IBV_WC_SEND) {
+                    check (0, "thread[%ld]: send failed status: %s; wr_id = %"PRIx64"",
+                           thread_id, ibv_wc_status_str(wc[i].status), wc[i].wr_id);
+                } else {
+                    check (0, "thread[%ld]: recv failed status: %s; wr_id = %"PRIx64"",
+                           thread_id, ibv_wc_status_str(wc[i].status), wc[i].wr_id);
+                }
+            }
+
+	    if (wc[i].opcode == IBV_WC_RECV) {
+                ops_count += 1;
+                debug ("ops_count = %ld", ops_count);
+
+                if (ops_count == NUM_WARMING_UP_OPS) {
+                    gettimeofday (&start, NULL);
+                }
+
+		imm_data = ntohl(wc[i].imm_data);
+		char *msg_ptr = (char *)wc[i].wr_id;
+
+                if (imm_data == MSG_CTL_STOP) {
+		    num_acked_peers += 1;
+		    if (num_acked_peers == num_peers) {
+			gettimeofday (&end, NULL);
+			stop = true;
+			break;
+		    }
+                } else {
+		    /* echo the message back */
+		    post_send (msg_size, lkey, 0, imm_data, qp[imm_data], msg_ptr);
+		}
+
+                /* post a new receive */
+		ret = post_srq_recv (msg_size, lkey, wc[i].wr_id, srq, msg_ptr);
+            }
+        } /* loop through all wc */
+    }
+
     /* dump statistics */
     duration   = (double)((end.tv_sec - start.tv_sec) * 1000000 + 
 			  (end.tv_usec - start.tv_usec));
