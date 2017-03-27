@@ -203,6 +203,7 @@ int setup_ib ()
             .max_recv_wr = ib_res.dev_attr.max_qp_wr,
             .max_send_sge = 1,
             .max_recv_sge = 1,
+	    .max_inline_data = config_info.msg_size,
         },
         .qp_type = IBV_QPT_RC,
     };
