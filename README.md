@@ -22,4 +22,4 @@ corresponding to the examples you are looking for.
 
 ## Contact
 
-Jiachen Xue (xuejiachen@gmail.com)
+Jiachen Xue (jcxue.work@gmail.com)
